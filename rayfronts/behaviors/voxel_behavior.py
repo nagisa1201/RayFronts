@@ -8,6 +8,7 @@ from rayfronts.utils import compute_cos_sim
 from nav_msgs.msg import Path
 from geometry_msgs.msg import PoseStamped
 import random
+import os
 
 class VoxelBehavior:
     def __init__(self, get_clock):
@@ -18,6 +19,12 @@ class VoxelBehavior:
         self.visited_clusters = []
         self.unvisited_clusters = []
         self.prev_voxel_cluster_ids = 0
+        # The console passes its configured radius; direct upstream launches
+        # keep the original 3 m behavior unless explicitly overridden.
+        self.waypoint_radius = float(os.environ.get('RAVEN_WAYPOINT_RADIUS', '3.0'))
+        if not np.isfinite(self.waypoint_radius) or self.waypoint_radius <= 0:
+            raise ValueError('RAVEN_WAYPOINT_RADIUS must be a finite positive number')
+        print(f'[VoxelBehavior] waypoint arrival radius <{self.waypoint_radius:g}m', flush=True)
 
     def condition_check(self, queries_labels, target_objects, queries_feats, mapper, publisher_dict, subscriber_dict):
         if queries_labels is None:
@@ -162,6 +169,8 @@ class VoxelBehavior:
                 if not waypoint_locked:
                     target_waypoint2 = adjacent_np
                     waypoint_locked = True
+                    print(f'[VoxelBehavior] selected candidate {idx}; waypoint={target_waypoint2.tolist()}; '
+                          f'arrival radius <{self.waypoint_radius:g}m', flush=True)
                 final_adj_pose_np = target_waypoint2
                 
                 alpha = 0.8
@@ -189,12 +198,16 @@ class VoxelBehavior:
 
         path_publisher.publish(path)
 
-        print("cur_pose_np - target_waypoint2 distance: ", np.linalg.norm(cur_pose_np - target_waypoint2))
+        waypoint_distance = np.linalg.norm(cur_pose_np - target_waypoint2)
+        print("cur_pose_np - target_waypoint2 distance: ", waypoint_distance)
         
-        if np.linalg.norm(cur_pose_np - target_waypoint2) < 3.0:
+        if waypoint_distance < self.waypoint_radius:
             if sorted_voxel_clusters_by_dist:
                 current_close_cluster = np.array(sorted_voxel_clusters_by_dist[0][1])
                 self.visited_clusters.append(current_close_cluster)
+                print(f'[VoxelBehavior] visited candidate {sorted_voxel_clusters_by_dist[0][0]}; '
+                      f'waypoint distance={waypoint_distance:.3f}m <{self.waypoint_radius:g}m; '
+                      'releasing waypoint', flush=True)
             waypoint_locked = False
         
         return waypoint_locked, target_waypoint1, target_waypoint2

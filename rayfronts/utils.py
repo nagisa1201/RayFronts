@@ -36,26 +36,32 @@ def compute_cos_sim(vec1: torch.FloatTensor,
       probability is returned across the N dimension.
   Returns:
     result: MxN float tensor representing similarity/prob. where result[0,1]
-      represents the similarity of vec1[0] with vec2[1]
+      represents the similarity of vec2[0] with vec1[1].
   """
   N, C1 = vec1.shape
   M, C2 = vec2.shape
   if C1 != C2:
     raise ValueError(f"vec1 feature dimension '{C1}' does not match vec2"
                      f"feature dimension '{C2}'")
-  C = C1
-
   vec1 = vec1 / vec1.norm(dim = -1, keepdim = True)
-  vec1 = vec1.reshape(1, N, 1, C)
+  text_columns = vec1.transpose(0, 1)
 
-  vec2 = vec2 / vec2.norm(dim=-1, keepdim = True)
-  vec2 = vec2.reshape(M, 1, C, 1)
+  def score_rows(rows):
+    rows = rows / rows.norm(dim=-1, keepdim=True)
+    # A 2D GEMM gives the same MxN dot products without broadcasting both
+    # inputs into MxNxC copies (several GiB on a growing global voxel map).
+    sim = rows @ text_columns
+    return torch.softmax(100 * sim, dim=-1) if softmax else sim
 
-  sim = (vec1 @ vec2).reshape(M, N)
-  if softmax:
-    return torch.softmax(100 * sim, dim = -1)
-  else:
-    return sim
+  # Chunk only the independent voxel/ray rows. Every row still sees ALL N
+  # queries in its softmax. This bounds the normalized feature temporary
+  # (64 MiB per chunk for 512-dimensional float32 features), preserving
+  # input precision, zero-vector behavior, output order and autograd.
+  chunk_rows = 32768
+  if M <= chunk_rows:
+    return score_rows(vec2)
+  return torch.cat([score_rows(vec2[start:start + chunk_rows])
+                    for start in range(0, M, chunk_rows)], dim=0)
 
 
 def hex_to_rgb(hex_code):

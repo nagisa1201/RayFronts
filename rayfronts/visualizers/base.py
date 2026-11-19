@@ -523,7 +523,10 @@ class Mapping3DVisualizer(abc.ABC):
     rgb_depth_img = torch.zeros(size=(H, W, 3), device=depth_img.device,
                                 dtype=torch.float)
     mask = depth_img.isfinite()
-    rgb_depth_img[mask, :] = utils.norm_01(depth_img[mask]).unsqueeze(-1)
+    # An all-invalid/far-range frame still has a valid diagnostic color image.
+    # Do not reduce an empty tensor; this is visualization only.
+    if mask.any():
+      rgb_depth_img[mask, :] = utils.norm_01(depth_img[mask]).unsqueeze(-1)
     mask = depth_img.isposinf()
     rgb_depth_img[mask, :] = torch.tensor([1., 0, 0])
     mask = depth_img.isneginf()
